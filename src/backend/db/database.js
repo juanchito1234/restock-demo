@@ -1,19 +1,24 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../../data/barrio_market.db');
+const isTestEnv = process.env.NODE_ENV === 'test' || process.env.USE_MEMORY_DB === 'true';
+const dbPath = isTestEnv ? ':memory:' : path.resolve(__dirname, '../../data/barrio_market.db');
 
-// Ensure parent dir exists or SQLite creates file
+// Ensure parent dir exists or SQLite creates file if not in-memory
 const fs = require('fs');
-const dataDir = path.dirname(dbPath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+if (!isTestEnv) {
+  const dataDir = path.dirname(dbPath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
 }
 
-const db = new Database(dbPath);
+let db = new Database(dbPath);
 
-// Enable foreign keys and WAL mode for better concurrency
-db.pragma('journal_mode = WAL');
+// Enable foreign keys and WAL mode for better concurrency (WAL mode is ignored for :memory:)
+if (!isTestEnv) {
+  db.pragma('journal_mode = WAL');
+}
 db.pragma('foreign_keys = ON');
 
 function initDb() {
@@ -85,6 +90,19 @@ function initDb() {
   }
 }
 
+function resetDb() {
+  db.exec(`
+    DELETE FROM audit_logs;
+    DELETE FROM purchase_orders;
+    DELETE FROM products;
+    DELETE FROM suppliers;
+  `);
+  initDb();
+}
+
 initDb();
+
+db.initDb = initDb;
+db.resetDb = resetDb;
 
 module.exports = db;

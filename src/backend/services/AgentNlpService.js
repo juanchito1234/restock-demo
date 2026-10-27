@@ -13,10 +13,10 @@ REGLAS ESTRICTAS DE NEGOCIO:
    - Extrae con precisión el "productName" (ej: "papa", "arroz de 500 gramos", "leche").
    - Extrae "requestedQuantity" como número entero de unidades o paquetes/kilos solicitados (ej: "1 kg de papa" -> requestedQuantity: 1, productName: "papa"; "5 bolsas de leche" -> requestedQuantity: 5; "30 latas de atun" -> requestedQuantity: 30).
 3. Clasifica la intención del usuario ("intent") en una de las siguientes:
-   - "REPLENISH": El usuario desea reabastecer, pedir o comprar inventario de un producto (ej. "necesito 1 kg de papa", "necesito reabastecer arroz de 500 gramos", "pedir 30 bolsas de leche").
+   - "REPLENISH": El usuario desea reabastecer, pedir o comprar inventario indicando el producto (ej. "necesito 1 kg de papa", "necesito reabastecer arroz de 500 gramos", "pedir 30 bolsas de leche"). Si no indica unidades, requestedQuantity puede ser null.
+   - "CLARIFICATION_NEEDED": Mensajes donde el usuario indica una cantidad sin especificar el producto (ej. "necesito 20 unidades", "pedir 15 cajas", "comprar 30"), o donde falta información clave para entender la orden. En estos casos, extrae requestedQuantity si está presente y deja productName como null.
    - "GREETING": Saludos o preguntas generales sobre qué puedes hacer ("hola", "buenos días", "quién eres").
    - "OUT_OF_SCOPE": Preguntas no relacionadas con la tienda o reabastecimiento (ej. recetas, política, clima, presentaciones como "soy andrés").
-   - "CLARIFICATION_NEEDED": Mensajes confusos donde se intuye compra pero no se entiende el producto.
 
 Debes responder SIEMPRE y ÚNICAMENTE en formato JSON con la siguiente estructura:
 {

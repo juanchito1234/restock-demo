@@ -31,6 +31,8 @@ const orderController = {
       if (analysis.intent !== 'REPLENISH' || !analysis.productName) {
         return res.status(200).json({
           status: analysis.intent || 'UNRECOGNIZED_INTENT',
+          productName: analysis.productName || null,
+          requestedQuantity: analysis.requestedQuantity || null,
           message: analysis.agentResponse || 'No pude entender la solicitud. Como asistente de Barrio Market, puedo ayudarte diciendo: «Necesito reabastecer arroz de 500 gramos».',
           provider: analysis.provider || 'Unknown',
           latencyMs: Date.now() - startTime

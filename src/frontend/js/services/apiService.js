@@ -22,6 +22,9 @@ const apiClient = {
     });
     const data = await response.json();
     if (!response.ok) {
+      if (response.status === 400 || response.status === 404) {
+        return data;
+      }
       throw new Error(data.message || `Error HTTP ${response.status}`);
     }
     return data;
@@ -38,6 +41,9 @@ const apiClient = {
     });
     const data = await response.json();
     if (!response.ok) {
+      if (response.status === 400 || response.status === 404) {
+        return data;
+      }
       throw new Error(data.message || `Error HTTP ${response.status}`);
     }
     return data;
@@ -54,6 +60,9 @@ const apiClient = {
     });
     const data = await response.json();
     if (!response.ok) {
+      if (response.status === 400 || response.status === 404) {
+        return data;
+      }
       throw new Error(data.message || `Error HTTP ${response.status}`);
     }
     return data;

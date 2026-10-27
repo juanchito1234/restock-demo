@@ -20,13 +20,24 @@ app.post('/api/orders/retry', orderController.handleRetry);
 app.post('/api/orders/confirm-registration', orderController.handleConfirmRegistration);
 app.post('/api/orders/cancel', orderController.handleCancel);
 
+// Middleware to restrict development/diagnostic endpoints in production (Hallazgo 7)
+const devOnly = (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({
+      status: 'FORBIDDEN',
+      message: 'Los endpoints de diagnóstico y simulación están deshabilitados en producción.'
+    });
+  }
+  next();
+};
+
 // Dev / Demo toggle endpoint
-app.post('/api/dev/simulate-failure', orderController.toggleSimulatedFailure);
+app.post('/api/dev/simulate-failure', devOnly, orderController.toggleSimulatedFailure);
 
 // Diagnostic endpoints for demo/testing verification
-app.get('/api/dev/products', orderController.getProducts);
-app.get('/api/dev/orders', orderController.getOrders);
-app.get('/api/dev/audit-logs', orderController.getAuditLogs);
+app.get('/api/dev/products', devOnly, orderController.getProducts);
+app.get('/api/dev/orders', devOnly, orderController.getOrders);
+app.get('/api/dev/audit-logs', devOnly, orderController.getAuditLogs);
 
 // Health check
 app.get('/api/health', (req, res) => {

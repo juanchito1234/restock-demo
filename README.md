@@ -26,9 +26,9 @@ Aplicación web conversacional que simula la interacción de un empleado de tien
 ```text
 impl_req6/
 ├── package.json                   # Dependencias y scripts de ejecución y pruebas
-├── data/
-│   └── barrio_market.db           # Base de datos relacional SQLite (WAL mode activado)
 ├── src/
+│   ├── data/
+│   │   └── barrio_market.db       # Base de datos relacional SQLite (WAL mode activado)
 │   ├── backend/
 │   │   ├── app.js                 # Servidor Express y configuración de rutas API
 │   │   ├── controllers/

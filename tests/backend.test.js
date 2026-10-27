@@ -1,4 +1,7 @@
+process.env.NODE_ENV = 'test';
+
 const assert = require('assert');
+const db = require('../src/backend/db/database');
 const purchaseOrderService = require('../src/backend/services/PurchaseOrderService');
 const {
   productRepository,
@@ -8,6 +11,10 @@ const {
 } = require('../src/backend/repositories');
 
 async function runTests() {
+  // Reset database state for repeatable tests (Hallazgo 1)
+  if (typeof db.resetDb === 'function') {
+    db.resetDb();
+  }
   console.log('--- INICIANDO SUITE DE PRUEBAS AUTOMATIZADAS (RF-006 & RF-007) ---');
 
   // Test 1: NLP Extraction
@@ -104,6 +111,58 @@ async function runTests() {
   const logs = auditLogRepository.listLogs();
   assert.ok(logs.length > 0);
   console.log(`✅ Prueba 7 superada: ${logs.length} eventos registrados en auditoría.`);
+
+  // Test 8: Extracción NLP no permisiva (Hallazgo 2)
+  console.log('Prueba 8: NLP no permisivo ante texto aleatorio');
+  const pRand = purchaseOrderService.extractProductInfo('asdf 1234');
+  assert.strictEqual(pRand, null);
+  const pValid = purchaseOrderService.extractProductInfo('pedir arroz de 500 gramos');
+  assert.strictEqual(pValid, 'arroz de 500 gramos');
+  console.log('✅ Prueba 8 superada: Texto aleatorio no se interpreta como producto.');
+
+  // Test 9: Órdenes fallidas persisten estado FAILED (Hallazgo 9)
+  console.log('Prueba 9: Persistencia de orden con estado FAILED');
+  const failedKey = `idemp-failed-check-${runId}`;
+  await purchaseOrderService.processReplenishment({
+    productName: 'arroz de 500 gramos',
+    idempotencyKey: failedKey,
+    sessionId: 'test-sess',
+    forceError: true
+  });
+  const failedOrder = purchaseOrderRepository.findByIdempotencyKey(failedKey);
+  assert.ok(failedOrder);
+  assert.strictEqual(failedOrder.status, 'FAILED');
+  console.log('✅ Prueba 9 superada: Intento fallido persistido con status FAILED.');
+
+  // Test 10: Inserción repetida de producto no genera error (Hallazgo 6)
+  console.log('Prueba 10: Prevención de error por producto duplicado');
+  const dupProd = `pan centeno ${runId}`;
+  const resDup1 = purchaseOrderService.registerAndOrder({
+    productName: dupProd,
+    sessionId: 'test-sess',
+    idempotencyKey: `idemp-dup-1-${runId}`,
+    quantity: 10,
+    unitCost: 1500
+  });
+  assert.strictEqual(resDup1.status, 'SUCCESS');
+  const resDup2 = purchaseOrderService.registerAndOrder({
+    productName: dupProd,
+    sessionId: 'test-sess',
+    idempotencyKey: `idemp-dup-2-${runId}`,
+    quantity: 10,
+    unitCost: 1500
+  });
+  assert.strictEqual(resDup2.status, 'SUCCESS');
+  console.log('✅ Prueba 10 superada: Registro duplicado manejado idóneamente sin error 500.');
+
+  // Test 11: Detección de cantidad sin producto para formulario interactivo
+  console.log('Prueba 11: Manejo de reabastecimiento con cantidad parcial');
+  const agentNlpService = require('../src/backend/services/AgentNlpService');
+  const partialAnalysis = await agentNlpService.analyzeMessage('necesito 20 unidades');
+  assert.strictEqual(partialAnalysis.intent, 'CLARIFICATION_NEEDED');
+  assert.strictEqual(partialAnalysis.requestedQuantity, 20);
+  assert.strictEqual(partialAnalysis.productName, null);
+  console.log('✅ Prueba 11 superada: Extracción de cantidad parcial lista para desplegar formulario.');
 
   console.log('\n======================================================');
   console.log('🎉 TODAS LAS PRUEBAS AUTOMATIZADAS PASARON SATISFACTORIAMENTE');

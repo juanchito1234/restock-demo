@@ -54,14 +54,56 @@ const purchaseOrderRepository = {
 
   create({ idempotencyKey, supplierId, productId, quantity, unitCost, totalAmount, status = 'CREATED' }) {
     const id = `ord-${uuidv4().substring(0, 8)}`;
-    const orderNumber = `OC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    
+    // Robust generation of unique order number with collision retry loop
+    const maxRetries = 10;
+    let orderNumber;
+    let inserted = false;
 
-    const stmt = db.prepare(`
-      INSERT INTO purchase_orders (id, order_number, idempotency_key, supplier_id, product_id, quantity, unit_cost, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // 6-digit random combined with timestamp component or sequential fallback
+      const randomPart = Math.floor(100000 + Math.random() * 900000);
+      orderNumber = `OC-${new Date().getFullYear()}-${randomPart}`;
 
-    stmt.run(id, orderNumber, idempotencyKey, supplierId, productId, quantity, unitCost, totalAmount, status);
+      try {
+        const stmt = db.prepare(`
+          INSERT INTO purchase_orders (id, order_number, idempotency_key, supplier_id, product_id, quantity, unit_cost, total_amount, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        stmt.run(id, orderNumber, idempotencyKey || null, supplierId, productId, quantity, unitCost, totalAmount, status);
+        inserted = true;
+        break;
+      } catch (err) {
+        if (err.message && err.message.includes('purchase_orders.order_number')) {
+          // Collision on order_number, retry with new number
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!inserted) {
+      // Fallback with UUID to strictly guarantee uniqueness
+      orderNumber = `OC-${new Date().getFullYear()}-${uuidv4().substring(0, 8).toUpperCase()}`;
+      const stmt = db.prepare(`
+        INSERT INTO purchase_orders (id, order_number, idempotency_key, supplier_id, product_id, quantity, unit_cost, total_amount, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(id, orderNumber, idempotencyKey || null, supplierId, productId, quantity, unitCost, totalAmount, status);
+    }
+
+    return this.findById(id);
+  },
+
+  update(id, updates) {
+    const fields = [];
+    const values = [];
+    for (const [key, val] of Object.entries(updates)) {
+      fields.push(`${key} = ?`);
+      values.push(val);
+    }
+    values.push(id);
+    db.prepare(`UPDATE purchase_orders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return this.findById(id);
   },
 

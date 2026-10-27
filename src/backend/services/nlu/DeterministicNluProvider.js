@@ -92,6 +92,16 @@ class DeterministicNluProvider extends INluProvider {
       };
     }
 
+    // 5.1 Replenishment with quantity only (no product specified, e.g. "necesito 20 unidades", "pedir 30 cajas", "20 unidades")
+    if (requestedQuantity && /(?:necesito|reabastecer|comprar|ordenar|pedir|solicito|unidades|cajas|paquetes|bolsas)/i.test(clean)) {
+      return {
+        intent: 'CLARIFICATION_NEEDED',
+        productName: null,
+        requestedQuantity: requestedQuantity,
+        agentResponse: `Entendido que necesitas ${requestedQuantity} unidades. Por favor indica qué producto deseas reabastecer en el formulario a continuación:`
+      };
+    }
+
     // 6. Generic rejection
     if (clean.split(/\s+/).length >= 2) {
       return {

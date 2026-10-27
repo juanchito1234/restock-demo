@@ -22,10 +22,10 @@ class PurchaseOrderService {
     if (!text || typeof text !== 'string') return null;
     const clean = text.toLowerCase().trim();
 
-    // Look for keywords: "reabastecer", "comprar", "ordenar", "necesito", "pedir"
+    // Look for explicit replenishment keywords: "reabastecer", "comprar", "ordenar", "necesito", "pedir"
     const regexes = [
       /(?:necesito reabastecer|reabastecer|comprar|ordenar|pedir|solicito reabastecer)\s+(?:de\s+)?([a-záéíóúñ0-9\s]+)/i,
-      /(?:reabastece|agrega orden para|crear orden de)\s+([a-záéíóúñ0-9\s]+)/i
+      /(?:reabastece|compra|ordena|pide|agrega orden para|crear orden de)\s+([a-záéíóúñ0-9\s]+)/i
     ];
 
     for (const rx of regexes) {
@@ -33,11 +33,6 @@ class PurchaseOrderService {
       if (match && match[1]) {
         return match[1].replace(/[.,;:!?]+$/, '').trim();
       }
-    }
-
-    // If query is short and doesn't match verbs, it might just be the product name directly
-    if (clean.length > 2 && !clean.includes('hola') && !clean.includes('gracias')) {
-      return clean;
     }
 
     return null;
@@ -90,10 +85,10 @@ class PurchaseOrderService {
    * Internal execution of order creation with idempotency and error simulation
    */
   executeOrderCreation({ product, idempotencyKey, sessionId, forceError = false, requestedQuantity = null }) {
-    // Check Idempotency: If already created with this idempotencyKey, return existing order (prevent duplicates)
+    // Check Idempotency: If already created with this idempotencyKey, check its status
     if (idempotencyKey) {
       const existingOrder = purchaseOrderRepository.findByIdempotencyKey(idempotencyKey);
-      if (existingOrder) {
+      if (existingOrder && existingOrder.status === 'CREATED') {
         const supplier = supplierRepository.findById(existingOrder.supplier_id);
         auditLogRepository.log({
           eventType: 'IDEMPOTENT_ORDER_RETURNED',
@@ -126,7 +121,31 @@ class PurchaseOrderService {
       this.simulateFailureNext = false; // Reset single-shot flag
     }
 
+    const supplier = supplierRepository.findById(product.default_supplier_id) || supplierRepository.getDefaultSupplier();
+    const quantity = requestedQuantity || product.default_order_quantity || 20;
+    const totalAmount = quantity * product.unit_cost;
+
     if (shouldFail) {
+      // Persist failed purchase order attempt in the database with status 'FAILED' (Hallazgo 9)
+      try {
+        const existingOrder = idempotencyKey ? purchaseOrderRepository.findByIdempotencyKey(idempotencyKey) : null;
+        if (existingOrder) {
+          purchaseOrderRepository.update(existingOrder.id, { status: 'FAILED' });
+        } else {
+          purchaseOrderRepository.create({
+            idempotencyKey,
+            supplierId: supplier.id,
+            productId: product.id,
+            quantity,
+            unitCost: product.unit_cost,
+            totalAmount,
+            status: 'FAILED'
+          });
+        }
+      } catch (err) {
+        console.error('Error persisting failed order:', err);
+      }
+
       // BR-005 & RF-006: Log error and return retryable error structure
       auditLogRepository.log({
         eventType: 'PURCHASE_ORDER_FAILED',
@@ -149,23 +168,29 @@ class PurchaseOrderService {
       };
     }
 
-    // BR-004: Use default supplier
-    const supplier = supplierRepository.findById(product.default_supplier_id) || supplierRepository.getDefaultSupplier();
-
-    // Calculate quantity: Use requested quantity or default_order_quantity
-    const quantity = requestedQuantity || product.default_order_quantity || 20;
-    const totalAmount = quantity * product.unit_cost;
-
-    // Create the order
-    const order = purchaseOrderRepository.create({
-      idempotencyKey,
-      supplierId: supplier.id,
-      productId: product.id,
-      quantity,
-      unitCost: product.unit_cost,
-      totalAmount,
-      status: 'CREATED'
-    });
+    // If there was an existing failed order with this idempotency key, update it to CREATED, otherwise create new
+    let order;
+    const existingOrder = idempotencyKey ? purchaseOrderRepository.findByIdempotencyKey(idempotencyKey) : null;
+    if (existingOrder) {
+      order = purchaseOrderRepository.update(existingOrder.id, {
+        supplier_id: supplier.id,
+        product_id: product.id,
+        quantity,
+        unit_cost: product.unit_cost,
+        total_amount: totalAmount,
+        status: 'CREATED'
+      });
+    } else {
+      order = purchaseOrderRepository.create({
+        idempotencyKey,
+        supplierId: supplier.id,
+        productId: product.id,
+        quantity,
+        unitCost: product.unit_cost,
+        totalAmount,
+        status: 'CREATED'
+      });
+    }
 
     // Audit log success
     auditLogRepository.log({
@@ -196,29 +221,33 @@ class PurchaseOrderService {
    * Handles user's confirmation to register non-existent product (BR-003)
    */
   registerAndOrder({ productName, sessionId, idempotencyKey, quantity = 24, unitCost = 2500.0 }) {
-    const defaultSupplier = supplierRepository.getDefaultSupplier();
     const qty = parseInt(quantity, 10) || 24;
     const cost = parseFloat(unitCost) || 2500.0;
 
-    const newProduct = productRepository.create({
-      name: productName,
-      defaultSupplierId: defaultSupplier.id,
-      currentStock: 0,
-      minStock: 10,
-      defaultOrderQuantity: qty,
-      unitCost: cost
-    });
+    // Check if product already exists to prevent duplicate insertion error (Hallazgo 6)
+    let product = productRepository.findByName(productName);
+    if (!product) {
+      const defaultSupplier = supplierRepository.getDefaultSupplier();
+      product = productRepository.create({
+        name: productName,
+        defaultSupplierId: defaultSupplier.id,
+        currentStock: 0,
+        minStock: 10,
+        defaultOrderQuantity: qty,
+        unitCost: cost
+      });
 
-    auditLogRepository.log({
-      eventType: 'PRODUCT_REGISTERED_BY_AGENT',
-      sessionId,
-      payload: { productId: newProduct.id, productName: newProduct.name, defaultOrderQuantity: qty, unitCost: cost },
-      details: 'Producto registrado mediante formulario interactivo (BR-003)'
-    });
+      auditLogRepository.log({
+        eventType: 'PRODUCT_REGISTERED_BY_AGENT',
+        sessionId,
+        payload: { productId: product.id, productName: product.name, defaultOrderQuantity: qty, unitCost: cost },
+        details: 'Producto registrado mediante formulario interactivo (BR-003)'
+      });
+    }
 
-    // Once registered, proceed with order creation
+    // Once registered (or retrieved if already existed), proceed with order creation
     return this.executeOrderCreation({
-      product: newProduct,
+      product: product,
       idempotencyKey,
       sessionId,
       forceError: false,

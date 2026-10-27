@@ -178,12 +178,54 @@ class ChatController {
         provider: provider,
         form: {
           productName: productName,
-          defaultQuantity: response.requestedQuantity || 1,
-          defaultCost: 2500
+          defaultQuantity: response.requestedQuantity || '',
+          defaultCost: 2500,
+          title: '📋 Registro de Nuevo Producto (BR-003)',
+          helpText: 'Completa o ajusta los parámetros antes de registrar en catálogo y generar la orden:'
         }
       });
       this.messagesContainer.appendChild(bubble);
-    } else if (status === 'UNRECOGNIZED_INTENT' || status === 'INVALID_INPUT' || status === 'GREETING' || status === 'OUT_OF_SCOPE' || status === 'CLARIFICATION_NEEDED') {
+    } else if (status === 'CLARIFICATION_NEEDED') {
+      // Manejo de persistencia: Si el usuario dio unidades o producto parcial, mostrar formulario con placeholders
+      const reqQty = response.requestedQuantity || (this.pendingContext ? this.pendingContext.requestedQuantity : null);
+      const prodN = productName || (this.pendingContext ? this.pendingContext.productName : null);
+
+      if (reqQty || prodN) {
+        this.pendingContext = {
+          action: 'CONFIRM_REGISTRATION',
+          productName: prodN || '',
+          requestedQuantity: reqQty || '',
+          idempotencyKey: idempotencyKey || window.apiClient.generateIdempotencyKey()
+        };
+
+        const bubble = window.ChatComponents.createMessageBubble({
+          sender: 'agent',
+          text: message,
+          status: 'WAITING',
+          provider: provider,
+          form: {
+            productName: prodN || '',
+            defaultQuantity: reqQty || '',
+            defaultCost: 2500,
+            title: '📝 Completar Datos de Reabastecimiento',
+            helpText: reqQty && !prodN 
+              ? `Has indicado ${reqQty} unidades. Por favor ingresa el nombre del producto para generar la orden:`
+              : `Has indicado el producto «${prodN}». Por favor ingresa las unidades a ordenar:`,
+            productPlaceholder: 'Ej. arroz de 500 gramos',
+            quantityPlaceholder: 'Ej. 24'
+          }
+        });
+        this.messagesContainer.appendChild(bubble);
+      } else {
+        const bubble = window.ChatComponents.createMessageBubble({
+          sender: 'agent',
+          text: message,
+          status: status,
+          provider: provider
+        });
+        this.messagesContainer.appendChild(bubble);
+      }
+    } else if (status === 'UNRECOGNIZED_INTENT' || status === 'INVALID_INPUT' || status === 'GREETING' || status === 'OUT_OF_SCOPE') {
       const bubble = window.ChatComponents.createMessageBubble({
         sender: 'agent',
         text: message,
@@ -241,13 +283,30 @@ class ChatController {
    * RF-006: Reintentar orden fallida
    */
   async executeRetry() {
-    if (!this.pendingContext || !this.pendingContext.productName) {
+    if (!this.pendingContext) {
       this.showStatusToast('No hay ninguna orden pendiente para reintentar.');
       return;
     }
 
-    const { productName, idempotencyKey } = this.pendingContext;
+    const { productName, message, idempotencyKey } = this.pendingContext;
     const forceError = this.simulationToggle ? this.simulationToggle.checked : false;
+
+    if (!productName && message) {
+      // Reintentar envío del mensaje original
+      const userBubble = window.ChatComponents.createMessageBubble({
+        sender: 'user',
+        text: `Reintentando: «${message}»`
+      });
+      this.messagesContainer.appendChild(userBubble);
+      this.scrollToBottom();
+      await this.processMessageWithBackend({ message, idempotencyKey, forceError });
+      return;
+    }
+
+    if (!productName) {
+      this.showStatusToast('No hay ninguna orden pendiente para reintentar.');
+      return;
+    }
 
     // Echo user retry intent in chat
     const userBubble = window.ChatComponents.createMessageBubble({
@@ -381,7 +440,14 @@ class ChatController {
       });
       this.messagesContainer.appendChild(bubble);
     } catch (e) {
-      console.error(e);
+      console.error('Error al cancelar la operación:', e);
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: `No se pudo completar la cancelación en el servidor: ${e.message || 'Error de conexión'}.`,
+        status: 'ERROR'
+      });
+      this.messagesContainer.appendChild(bubble);
+      this.showStatusToast('Error al cancelar la operación.');
     } finally {
       this.setLoadingState(false);
       this.scrollToBottom();
@@ -389,6 +455,16 @@ class ChatController {
   }
 
   handleCommunicationError(error, context = {}) {
+    // Explicitly preserve pending context so that retry works (Hallazgo 3)
+    if (context && (context.message || context.productName)) {
+      this.pendingContext = {
+        action: context.action || (context.productName ? 'RETRY' : 'RETRY_MESSAGE'),
+        message: context.message,
+        productName: context.productName,
+        idempotencyKey: context.idempotencyKey || window.apiClient.generateIdempotencyKey()
+      };
+    }
+
     const bubble = window.ChatComponents.createMessageBubble({
       sender: 'agent',
       text: `Error de comunicación con el servidor: ${error.message}. Por favor verifica tu conexión y vuelve a intentar.`,

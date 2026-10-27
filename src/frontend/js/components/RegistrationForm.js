@@ -9,17 +9,27 @@ class RegistrationForm {
    * @param {Object} props - { productName, defaultQuantity, defaultCost }
    * @returns {HTMLElement}
    */
-  static render({ productName = '', defaultQuantity = 24, defaultCost = 2500 } = {}) {
+  static render({ 
+    productName = '', 
+    defaultQuantity = '', 
+    defaultCost = 2500,
+    title = '📋 Registro de Nuevo Producto (BR-003)',
+    helpText = 'Completa o ajusta los parámetros antes de registrar en catálogo y generar la orden:',
+    productPlaceholder = 'Ej. arroz de 500 gramos',
+    quantityPlaceholder = 'Ej. 24'
+  } = {}) {
     const form = document.createElement('form');
     form.className = 'embedded-registration-form';
     form.setAttribute('data-component', 'RegistrationForm');
     form.noValidate = true;
 
+    const qtyVal = defaultQuantity !== null && defaultQuantity !== undefined && defaultQuantity !== '' ? defaultQuantity : '';
+
     form.innerHTML = `
       <div class="form-title">
-        <span>📋 Registro de Nuevo Producto (BR-003)</span>
+        <span>${window.ChatUtils.escapeHtml(title)}</span>
       </div>
-      <p class="form-help">Completa o ajusta los parámetros antes de registrar en catálogo y generar la orden:</p>
+      <p class="form-help">${window.ChatUtils.escapeHtml(helpText)}</p>
       
       <div class="form-field-group">
         <label class="form-label" for="form-prod-name">Nombre del Producto:</label>
@@ -29,6 +39,7 @@ class RegistrationForm {
           name="productName" 
           class="form-control" 
           value="${window.ChatUtils.escapeHtml(productName)}" 
+          placeholder="${window.ChatUtils.escapeHtml(productPlaceholder)}"
           required 
         />
         <span class="form-error-msg" id="err-prod-name"></span>
@@ -42,7 +53,8 @@ class RegistrationForm {
             id="form-prod-qty" 
             name="quantity" 
             class="form-control" 
-            value="${defaultQuantity}" 
+            value="${qtyVal}" 
+            placeholder="${window.ChatUtils.escapeHtml(quantityPlaceholder)}"
             min="1" 
             max="500" 
             required 
