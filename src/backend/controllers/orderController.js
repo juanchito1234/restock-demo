@@ -1,4 +1,5 @@
 const purchaseOrderService = require('../services/PurchaseOrderService');
+const agentNlpService = require('../services/AgentNlpService');
 const {
   productRepository,
   supplierRepository,
@@ -24,25 +25,34 @@ const orderController = {
         });
       }
 
-      // Extract intention and product
-      const productName = purchaseOrderService.extractProductInfo(message);
+      // Analyze message with the strict Agent NLP Service
+      const analysis = await agentNlpService.analyzeMessage(message);
 
-      if (!productName) {
+      if (analysis.intent !== 'REPLENISH' || !analysis.productName) {
         return res.status(200).json({
-          status: 'UNRECOGNIZED_INTENT',
-          message: 'No pude entender la solicitud. Puedes decir algo como «Necesito reabastecer arroz de 500 gramos».',
+          status: analysis.intent || 'UNRECOGNIZED_INTENT',
+          message: analysis.agentResponse || 'No pude entender la solicitud. Como asistente de Barrio Market, puedo ayudarte diciendo: «Necesito reabastecer arroz de 500 gramos».',
+          provider: analysis.provider || 'Unknown',
           latencyMs: Date.now() - startTime
         });
       }
+
+      const productName = analysis.productName;
 
       const result = await purchaseOrderService.processReplenishment({
         productName,
         idempotencyKey,
         sessionId,
-        forceError: Boolean(forceError)
+        forceError: Boolean(forceError),
+        requestedQuantity: analysis.requestedQuantity || null
       });
 
+      if (analysis.agentResponse && result.status !== 'ERROR' && result.status !== 'PRODUCT_NOT_FOUND') {
+        result.agentMessage = analysis.agentResponse;
+      }
+
       result.latencyMs = Date.now() - startTime;
+      result.provider = analysis.provider || 'GroqNluProvider';
       return res.status(200).json(result);
     } catch (error) {
       console.error('Error handling chat message:', error);
@@ -117,7 +127,7 @@ const orderController = {
   async handleConfirmRegistration(req, res) {
     const startTime = Date.now();
     try {
-      const { productName, confirmed, idempotencyKey, sessionId } = req.body;
+      const { productName, confirmed, idempotencyKey, sessionId, quantity, unitCost } = req.body;
 
       if (!productName) {
         return res.status(400).json({
@@ -140,7 +150,9 @@ const orderController = {
       const result = purchaseOrderService.registerAndOrder({
         productName,
         sessionId,
-        idempotencyKey
+        idempotencyKey,
+        quantity,
+        unitCost
       });
 
       result.latencyMs = Date.now() - startTime;

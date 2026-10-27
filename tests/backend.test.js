@@ -18,11 +18,13 @@ async function runTests() {
   assert.strictEqual(p2, 'leche entera 1 litro');
   console.log('✅ Prueba 1 superada: Extracción de producto correcta.');
 
+  const runId = Date.now();
   // Test 2: Escenario A - Creación Exitosa (RF-007)
   console.log('Prueba 2: Escenario A - Creación de orden exitosa (RF-007)');
+  const keyA = `idemp-test-success-${runId}`;
   const resA = await purchaseOrderService.processReplenishment({
     productName: 'arroz de 500 gramos',
-    idempotencyKey: 'idemp-test-success-1',
+    idempotencyKey: keyA,
     sessionId: 'test-sess',
     forceError: false
   });
@@ -36,7 +38,7 @@ async function runTests() {
   console.log('Prueba 3: Control de idempotencia y prevención de órdenes duplicadas');
   const resAIdemp = await purchaseOrderService.processReplenishment({
     productName: 'arroz de 500 gramos',
-    idempotencyKey: 'idemp-test-success-1', // Misma clave
+    idempotencyKey: keyA, // Misma clave
     sessionId: 'test-sess',
     forceError: false
   });
@@ -47,9 +49,10 @@ async function runTests() {
 
   // Test 4: Escenario B - Error controlado (RF-006)
   console.log('Prueba 4: Escenario B - Detección de error y oferta de reintento (RF-006)');
+  const keyFail = `idemp-test-fail-${runId}`;
   const resB = await purchaseOrderService.processReplenishment({
     productName: 'arroz de 500 gramos',
-    idempotencyKey: 'idemp-test-fail-1',
+    idempotencyKey: keyFail,
     sessionId: 'test-sess',
     forceError: true
   });
@@ -63,7 +66,7 @@ async function runTests() {
   const prod = productRepository.findByName('arroz de 500 gramos');
   const resC = purchaseOrderService.executeOrderCreation({
     product: prod,
-    idempotencyKey: 'idemp-test-fail-1', // Misma clave tras solucionar falla
+    idempotencyKey: keyFail, // Misma clave tras solucionar falla
     sessionId: 'test-sess',
     forceError: false
   });
@@ -73,10 +76,11 @@ async function runTests() {
 
   // Test 6: Escenario D - Producto inexistente y confirmación de creación (BR-003)
   console.log('Prueba 6: Escenario D - Producto no existente (BR-003)');
-  const randomProdName = 'aceite de oliva extra virgen 500ml';
+  const randomProdName = `aceite oliva ${runId}`;
+  const keyNew = `idemp-test-new-prod-${runId}`;
   const resD1 = await purchaseOrderService.processReplenishment({
     productName: randomProdName,
-    idempotencyKey: 'idemp-test-new-prod-1',
+    idempotencyKey: keyNew,
     sessionId: 'test-sess'
   });
   assert.strictEqual(resD1.status, 'PRODUCT_NOT_FOUND');
@@ -86,10 +90,13 @@ async function runTests() {
   const resD2 = purchaseOrderService.registerAndOrder({
     productName: randomProdName,
     sessionId: 'test-sess',
-    idempotencyKey: 'idemp-test-new-prod-1'
+    idempotencyKey: keyNew,
+    quantity: 30,
+    unitCost: 3200
   });
   assert.strictEqual(resD2.status, 'SUCCESS');
   assert.strictEqual(resD2.order.productName, randomProdName);
+  assert.strictEqual(resD2.order.quantity, 30);
   console.log('✅ Prueba 6 superada: Producto registrado y orden generada tras confirmación.');
 
   // Test 7: Verificación de auditoría

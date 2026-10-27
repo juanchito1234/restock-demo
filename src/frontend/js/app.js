@@ -38,6 +38,14 @@ class ChatController {
       this.handleActionClick(btn);
     });
 
+    // Delegate embedded registration form submit
+    this.messagesContainer.addEventListener('submit', (e) => {
+      const form = e.target.closest('.embedded-registration-form');
+      if (!form) return;
+      e.preventDefault();
+      this.handleRegistrationFormSubmit(form);
+    });
+
     if (this.simulationToggle) {
       this.simulationToggle.addEventListener('change', async (e) => {
         const isChecked = e.target.checked;
@@ -124,7 +132,7 @@ class ChatController {
   }
 
   handleApiResponse(response) {
-    const { status, message, order, actions, productName, idempotencyKey } = response;
+    const { status, message, order, actions, productName, idempotencyKey, provider } = response;
 
     if (status === 'SUCCESS') {
       this.pendingContext = null;
@@ -132,7 +140,8 @@ class ChatController {
         sender: 'agent',
         text: message,
         status: 'SUCCESS',
-        order: order
+        order: order,
+        provider: provider
       });
       this.messagesContainer.appendChild(bubble);
     } else if (status === 'ERROR') {
@@ -147,6 +156,7 @@ class ChatController {
         sender: 'agent',
         text: message,
         status: 'ERROR',
+        provider: provider,
         actions: actions || [
           { type: 'RETRY', label: 'Reintentar orden', value: true },
           { type: 'CANCEL', label: 'Cancelar', value: false }
@@ -154,7 +164,7 @@ class ChatController {
       });
       this.messagesContainer.appendChild(bubble);
     } else if (status === 'PRODUCT_NOT_FOUND') {
-      // BR-003: Producto inexistente -> Confirmación
+      // BR-003: Producto inexistente -> Formulario Interactivo Reutilizable
       this.pendingContext = {
         action: 'CONFIRM_REGISTRATION',
         productName: productName,
@@ -165,22 +175,27 @@ class ChatController {
         sender: 'agent',
         text: message,
         status: 'WAITING',
-        actions: actions || [
-          { type: 'CONFIRM_REGISTRATION', label: 'Sí, registrar y ordenar', value: true },
-          { type: 'CANCEL', label: 'No, cancelar', value: false }
-        ]
+        provider: provider,
+        form: {
+          productName: productName,
+          defaultQuantity: response.requestedQuantity || 1,
+          defaultCost: 2500
+        }
       });
       this.messagesContainer.appendChild(bubble);
-    } else if (status === 'UNRECOGNIZED_INTENT' || status === 'INVALID_INPUT') {
+    } else if (status === 'UNRECOGNIZED_INTENT' || status === 'INVALID_INPUT' || status === 'GREETING' || status === 'OUT_OF_SCOPE' || status === 'CLARIFICATION_NEEDED') {
       const bubble = window.ChatComponents.createMessageBubble({
         sender: 'agent',
-        text: message
+        text: message,
+        status: status,
+        provider: provider
       });
       this.messagesContainer.appendChild(bubble);
     } else {
       const bubble = window.ChatComponents.createMessageBubble({
         sender: 'agent',
-        text: message || 'Operación finalizada.'
+        text: message || 'Operación finalizada.',
+        provider: provider
       });
       this.messagesContainer.appendChild(bubble);
     }
@@ -190,6 +205,19 @@ class ChatController {
 
   async handleActionClick(button) {
     if (this.isProcessing) return;
+
+    // Check if click was inside an embedded form button
+    const form = button.closest('.embedded-registration-form');
+    if (form) {
+      const formAction = button.getAttribute('data-action');
+      if (formAction === 'cancel-registration') {
+        form.querySelectorAll('button, input').forEach(el => el.disabled = true);
+        await this.executeCancel();
+        return;
+      }
+      // If it's submit-registration, form submit event handles it
+      return;
+    }
 
     const actionType = button.getAttribute('data-action-type');
     const actionValue = button.getAttribute('data-action-value') === 'true';
@@ -249,7 +277,53 @@ class ChatController {
   }
 
   /**
-   * BR-003: Confirmación de registro de producto
+   * Manejo y Validación de Formulario de Registro Interactivo (BR-003)
+   */
+  async handleRegistrationFormSubmit(form) {
+    if (this.isProcessing) return;
+
+    // Delegate validation to the RegistrationForm component
+    const validatedData = window.RegistrationForm ? window.RegistrationForm.validate(form) : null;
+    if (!validatedData) return;
+
+    const { productName, quantity, unitCost } = validatedData;
+
+    // Disable form fields to avoid duplicate submits
+    form.querySelectorAll('input, button').forEach(el => el.disabled = true);
+
+    const idempotencyKey = (this.pendingContext && this.pendingContext.idempotencyKey) || window.apiClient.generateIdempotencyKey();
+
+    // Render user bubble confirming submission
+    const userBubble = window.ChatComponents.createMessageBubble({
+      sender: 'user',
+      text: `Registrar «${productName}» (${quantity} unidades a $${unitCost.toLocaleString('es-CO')} c/u) y generar orden.`
+    });
+    this.messagesContainer.appendChild(userBubble);
+    this.scrollToBottom();
+
+    this.setLoadingState(true);
+
+    try {
+      const response = await window.apiClient.confirmRegistration({
+        productName,
+        confirmed: true,
+        idempotencyKey,
+        sessionId: this.sessionId,
+        quantity,
+        unitCost
+      });
+
+      this.handleApiResponse(response);
+    } catch (error) {
+      console.error('Error confirming registration via form:', error);
+      this.handleCommunicationError(error);
+    } finally {
+      this.setLoadingState(false);
+    }
+  }
+
+  /**
+   * BR-003: Confirmación de registro de producto (Fallback rápido)
    */
   async executeConfirmRegistration(confirmed) {
     if (!this.pendingContext) return;

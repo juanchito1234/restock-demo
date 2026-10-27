@@ -16,10 +16,12 @@
   "author": "Barrio Market Dev Agent",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^2.31.0",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "groq-sdk": "^1.6.0",
     "uuid": "^11.1.0"
   }
 }

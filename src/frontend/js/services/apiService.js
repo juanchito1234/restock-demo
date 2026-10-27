@@ -44,13 +44,13 @@ const apiClient = {
   },
 
   /**
-   * Confirm or reject new product registration
+   * Confirm or reject new product registration with optional custom quantity and unitCost
    */
-  async confirmRegistration({ productName, confirmed, idempotencyKey, sessionId }) {
+  async confirmRegistration({ productName, confirmed, idempotencyKey, sessionId, quantity, unitCost }) {
     const response = await fetch(`${this.baseUrl}/api/orders/confirm-registration`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productName, confirmed, idempotencyKey, sessionId })
+      body: JSON.stringify({ productName, confirmed, idempotencyKey, sessionId, quantity, unitCost })
     });
     const data = await response.json();
     if (!response.ok) {

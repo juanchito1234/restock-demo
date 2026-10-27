@@ -74,6 +74,7 @@ class PurchaseOrderService {
       return {
         status: 'PRODUCT_NOT_FOUND',
         productName,
+        requestedQuantity: requestedQuantity || 1,
         message: `El producto «${productName}» no se encuentra en el catálogo. ¿Deseas registrarlo para proceder con la orden de compra?`,
         actions: [
           { type: 'CONFIRM_REGISTRATION', label: 'Sí, registrar y ordenar', value: true },
@@ -194,22 +195,25 @@ class PurchaseOrderService {
   /**
    * Handles user's confirmation to register non-existent product (BR-003)
    */
-  registerAndOrder({ productName, sessionId, idempotencyKey }) {
+  registerAndOrder({ productName, sessionId, idempotencyKey, quantity = 24, unitCost = 2500.0 }) {
     const defaultSupplier = supplierRepository.getDefaultSupplier();
+    const qty = parseInt(quantity, 10) || 24;
+    const cost = parseFloat(unitCost) || 2500.0;
+
     const newProduct = productRepository.create({
       name: productName,
       defaultSupplierId: defaultSupplier.id,
       currentStock: 0,
       minStock: 10,
-      defaultOrderQuantity: 24,
-      unitCost: 2500.0
+      defaultOrderQuantity: qty,
+      unitCost: cost
     });
 
     auditLogRepository.log({
       eventType: 'PRODUCT_REGISTERED_BY_AGENT',
       sessionId,
-      payload: { productId: newProduct.id, productName: newProduct.name },
-      details: 'Producto registrado tras confirmación del empleado (BR-003)'
+      payload: { productId: newProduct.id, productName: newProduct.name, defaultOrderQuantity: qty, unitCost: cost },
+      details: 'Producto registrado mediante formulario interactivo (BR-003)'
     });
 
     // Once registered, proceed with order creation
@@ -217,7 +221,8 @@ class PurchaseOrderService {
       product: newProduct,
       idempotencyKey,
       sessionId,
-      forceError: false
+      forceError: false,
+      requestedQuantity: qty
     });
   }
 

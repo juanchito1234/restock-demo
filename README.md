@@ -34,6 +34,7 @@ impl_req6/
 │   │   ├── controllers/
 │   │   │   └── orderController.js # Manejo de solicitudes HTTP y respuestas JSON
 │   │   ├── services/
+│   │   │   ├── AgentNlpService.js # Agente Conversacional con Gemini AI y fallback estructurado
 │   │   │   └── PurchaseOrderService.js # Lógica de negocio, reglas de reabastecimiento e idempotencia
 │   │   ├── repositories/
 │   │   │   └── index.js           # Acceso a datos para productos, proveedores, órdenes y auditoría
@@ -42,16 +43,44 @@ impl_req6/
 │   └── frontend/
 │       ├── index.html             # Interfaz web simulación chat Telegram
 │       ├── css/
-│       │   └── style.css          # Estilos modernos, responsive, dark theme y tarjetas de orden
+│       │   └── style.css          # Estilos modernos, responsive, dark theme, formularios y tarjetas
 │       └── js/
 │           ├── app.js             # Controlador de estado conversacional y eventos de UI
 │           ├── components/
-│           │   └── chatComponents.js # Componentes MessageBubble, OrderSummaryCard, TypingIndicator
+│           │   └── chatComponents.js # Componentes: MessageBubble, OrderSummaryCard, RegistrationForm
 │           └── services/
 │               └── apiService.js  # Abstracción de llamadas HTTP fetch al backend
 └── tests/
     └── backend.test.js            # Pruebas automatizadas de los escenarios A, B, C, D e idempotencia
 ```
+
+---
+
+## 3. Elementos Clave para la Exposición Académica
+
+### A. Agente Conversacional Real con Prompt Estricto
+- **Ubicación:** [`src/backend/services/AgentNlpService.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/backend/services/AgentNlpService.js)
+- **Implementación:**
+  - Si se define `GEMINI_API_KEY`, utiliza `@google/genai` con `gemini-2.5-flash` y un prompt de sistema rígido para restringirse a **RF-006** y **RF-007**.
+  - Si no hay API key, cuenta con un motor NLU integrado de alta precisión que clasifica intenciones (`REPLENISH`, `GREETING`, `OUT_OF_SCOPE`, `CLARIFICATION_NEEDED`) y extrae automáticamente cantidades y nombres de producto normalizados.
+
+### B. Componentes Reutilizables y Arquitectura Desacoplada (Alta Cohesión, Bajo Acoplamiento)
+- **Ubicación:** Carpeta [`src/frontend/js/components/`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/)
+- **Componentes Independientes:**
+  1. [`MessageBubble.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/MessageBubble.js): Contenedor de burbuja de chat para usuario y agente, metadatos, insignias de estado temáticas y ranuras para componentes hijos.
+  2. [`OrderSummaryCard.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/OrderSummaryCard.js) (**RF-007**): Componente especializado exclusivamente en renderizar la tarjeta de orden creada (número de orden, proveedor, costo unitario, cantidades y total).
+  3. [`RegistrationForm.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/RegistrationForm.js) (**BR-003**): Formulario interactivo embebido que encapsula su propia plantilla HTML y validación del lado del cliente (`validate()`).
+  4. [`ActionButtons.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/ActionButtons.js) (**RF-006**): Componente desacoplado para botones de reintento (`btn-retry`), confirmación y cancelación.
+  5. [`TypingIndicator.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/TypingIndicator.js): Componente visual que abstrae el feedback de carga y espera del agente.
+  6. [`ChatUtils.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/components/ChatUtils.js): Utilidades puras para formateo de moneda colombiana (COP), hora y saneamiento contra ataques XSS (`escapeHtml`).
+
+### C. Manejo de Estados de Carga, Respuestas y Errores
+- **Ubicación:** [`src/frontend/js/app.js`](file:///f:/Universidad/Semestre_VIII/software3/impl_req6/src/frontend/js/app.js)
+- **Implementación:**
+  - **Estado de Carga:** Deshabilita el botón de envío y el input, activa la insignia `Agente procesando...` y muestra la animación de escritura.
+  - **Validación del Cliente:** Efecto visual elástico (`input-shake`) cuando se intenta enviar un mensaje vacío o datos inválidos en el formulario.
+  - **Manejo de Errores (RF-006):** Captura fallos del servidor, muestra la insignia de error y activa el botón de reintento (`🔄 Reintentar orden`), conservando la clave de idempotencia (`idempotencyKey`) para no duplicar pedidos.
+
 
 ---
 
