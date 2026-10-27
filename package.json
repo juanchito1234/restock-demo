@@ -1,0 +1,25 @@
+{
+  "name": "barrio-market-rf006",
+  "version": "1.0.0",
+  "description": "Barrio Market - Implementacion RF-006 (Manejo de errores y reintentos) y RF-007",
+  "main": "src/backend/app.js",
+  "scripts": {
+    "start": "node src/backend/app.js",
+    "test": "node tests/backend.test.js"
+  },
+  "keywords": [
+    "sdd",
+    "ai-coding-agent",
+    "barrio-market",
+    "rf-006"
+  ],
+  "author": "Barrio Market Dev Agent",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "uuid": "^11.1.0"
+  }
+}

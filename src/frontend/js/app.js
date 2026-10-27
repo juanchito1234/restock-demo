@@ -1,0 +1,387 @@
+// Main Chat Controller / Application State Manager
+// Implements RF-006 (Error handling & Retry) & RF-007 (Notification of created order)
+
+class ChatController {
+  constructor() {
+    this.sessionId = 'sess-' + Date.now();
+    this.isProcessing = false;
+    this.pendingContext = null; // Stores retry/confirmation context
+
+    // DOM Elements
+    this.messagesContainer = document.getElementById('chat-messages');
+    this.chatForm = document.getElementById('chat-form');
+    this.messageInput = document.getElementById('message-input');
+    this.btnSend = document.getElementById('btn-send');
+    this.statusIndicator = document.getElementById('status-indicator');
+    this.quickPromptsContainer = document.getElementById('quick-prompts');
+    this.simulationToggle = document.getElementById('toggle-simulate-error');
+
+    this.init();
+  }
+
+  init() {
+    this.setupEventListeners();
+    this.setupQuickPrompts();
+    this.renderWelcomeMessage();
+  }
+
+  setupEventListeners() {
+    this.chatForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.handleUserSubmit();
+    });
+
+    // Delegate action clicks (Retry, Confirm Registration, Cancel)
+    this.messagesContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-action');
+      if (!btn) return;
+      this.handleActionClick(btn);
+    });
+
+    if (this.simulationToggle) {
+      this.simulationToggle.addEventListener('change', async (e) => {
+        const isChecked = e.target.checked;
+        try {
+          await window.apiClient.setSimulateFailure(isChecked);
+          this.showStatusToast(`Simulación de falla: ${isChecked ? 'ACTIVADA (RF-006)' : 'DESACTIVADA'}`);
+        } catch (err) {
+          console.error('Error toggling failure:', err);
+        }
+      });
+    }
+  }
+
+  setupQuickPrompts() {
+    if (!this.quickPromptsContainer) return;
+    this.quickPromptsContainer.addEventListener('click', (e) => {
+      const chip = e.target.closest('.prompt-chip');
+      if (!chip) return;
+      const promptText = chip.getAttribute('data-prompt');
+      if (promptText) {
+        this.messageInput.value = promptText;
+        this.messageInput.focus();
+      }
+    });
+  }
+
+  renderWelcomeMessage() {
+    const welcomeBubble = window.ChatComponents.createMessageBubble({
+      sender: 'agent',
+      text: '¡Hola! Soy tu asistente de Barrio Market 🛒. Puedo ayudarte a reabastecer productos de tu tienda. Escribe una solicitud como: «Necesito reabastecer arroz de 500 gramos».',
+      status: 'READY'
+    });
+    this.messagesContainer.appendChild(welcomeBubble);
+    this.scrollToBottom();
+  }
+
+  async handleUserSubmit() {
+    const rawText = this.messageInput.value;
+    const message = rawText ? rawText.trim() : '';
+
+    // Client-side validation: Message cannot be empty
+    if (!message) {
+      this.shakeInput();
+      return;
+    }
+
+    if (this.isProcessing) return;
+
+    // Render user message bubble
+    const userBubble = window.ChatComponents.createMessageBubble({
+      sender: 'user',
+      text: message
+    });
+    this.messagesContainer.appendChild(userBubble);
+    this.messageInput.value = '';
+    this.messageInput.style.height = 'auto'; // Reset textarea height
+    this.scrollToBottom();
+
+    // Generate idempotency key for this order attempt
+    const idempotencyKey = window.apiClient.generateIdempotencyKey();
+    const forceError = this.simulationToggle ? this.simulationToggle.checked : false;
+
+    await this.processMessageWithBackend({ message, idempotencyKey, forceError });
+  }
+
+  async processMessageWithBackend({ message, idempotencyKey, forceError }) {
+    this.setLoadingState(true);
+
+    try {
+      const response = await window.apiClient.sendMessage({
+        message,
+        sessionId: this.sessionId,
+        idempotencyKey,
+        forceError
+      });
+
+      this.handleApiResponse(response);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      this.handleCommunicationError(error, { message, idempotencyKey });
+    } finally {
+      this.setLoadingState(false);
+    }
+  }
+
+  handleApiResponse(response) {
+    const { status, message, order, actions, productName, idempotencyKey } = response;
+
+    if (status === 'SUCCESS') {
+      this.pendingContext = null;
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: message,
+        status: 'SUCCESS',
+        order: order
+      });
+      this.messagesContainer.appendChild(bubble);
+    } else if (status === 'ERROR') {
+      // RF-006: Manejo de errores al crear una orden de compra y ofrecer reintento
+      this.pendingContext = {
+        action: 'RETRY',
+        productName: productName,
+        idempotencyKey: idempotencyKey || window.apiClient.generateIdempotencyKey()
+      };
+
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: message,
+        status: 'ERROR',
+        actions: actions || [
+          { type: 'RETRY', label: 'Reintentar orden', value: true },
+          { type: 'CANCEL', label: 'Cancelar', value: false }
+        ]
+      });
+      this.messagesContainer.appendChild(bubble);
+    } else if (status === 'PRODUCT_NOT_FOUND') {
+      // BR-003: Producto inexistente -> Confirmación
+      this.pendingContext = {
+        action: 'CONFIRM_REGISTRATION',
+        productName: productName,
+        idempotencyKey: idempotencyKey || window.apiClient.generateIdempotencyKey()
+      };
+
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: message,
+        status: 'WAITING',
+        actions: actions || [
+          { type: 'CONFIRM_REGISTRATION', label: 'Sí, registrar y ordenar', value: true },
+          { type: 'CANCEL', label: 'No, cancelar', value: false }
+        ]
+      });
+      this.messagesContainer.appendChild(bubble);
+    } else if (status === 'UNRECOGNIZED_INTENT' || status === 'INVALID_INPUT') {
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: message
+      });
+      this.messagesContainer.appendChild(bubble);
+    } else {
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: message || 'Operación finalizada.'
+      });
+      this.messagesContainer.appendChild(bubble);
+    }
+
+    this.scrollToBottom();
+  }
+
+  async handleActionClick(button) {
+    if (this.isProcessing) return;
+
+    const actionType = button.getAttribute('data-action-type');
+    const actionValue = button.getAttribute('data-action-value') === 'true';
+
+    // Disable all buttons in this message card to prevent multi-clicks
+    const parentActions = button.closest('.message-actions');
+    if (parentActions) {
+      parentActions.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    }
+
+    if (actionType === 'RETRY') {
+      await this.executeRetry();
+    } else if (actionType === 'CONFIRM_REGISTRATION') {
+      await this.executeConfirmRegistration(actionValue);
+    } else if (actionType === 'CANCEL') {
+      await this.executeCancel();
+    }
+  }
+
+  /**
+   * RF-006: Reintentar orden fallida
+   */
+  async executeRetry() {
+    if (!this.pendingContext || !this.pendingContext.productName) {
+      this.showStatusToast('No hay ninguna orden pendiente para reintentar.');
+      return;
+    }
+
+    const { productName, idempotencyKey } = this.pendingContext;
+    const forceError = this.simulationToggle ? this.simulationToggle.checked : false;
+
+    // Echo user retry intent in chat
+    const userBubble = window.ChatComponents.createMessageBubble({
+      sender: 'user',
+      text: `Reintentar orden de compra para «${productName}»`
+    });
+    this.messagesContainer.appendChild(userBubble);
+    this.scrollToBottom();
+
+    this.setLoadingState(true);
+
+    try {
+      const response = await window.apiClient.retryOrder({
+        productName,
+        idempotencyKey,
+        sessionId: this.sessionId,
+        forceError
+      });
+
+      this.handleApiResponse(response);
+    } catch (error) {
+      console.error('Error in retry:', error);
+      this.handleCommunicationError(error, { productName, idempotencyKey });
+    } finally {
+      this.setLoadingState(false);
+    }
+  }
+
+  /**
+   * BR-003: Confirmación de registro de producto
+   */
+  async executeConfirmRegistration(confirmed) {
+    if (!this.pendingContext) return;
+    const { productName, idempotencyKey } = this.pendingContext;
+
+    const userBubble = window.ChatComponents.createMessageBubble({
+      sender: 'user',
+      text: confirmed ? `Sí, deseo registrar «${productName}» y generar la orden.` : `No, deseo cancelar la solicitud de «${productName}».`
+    });
+    this.messagesContainer.appendChild(userBubble);
+    this.scrollToBottom();
+
+    this.setLoadingState(true);
+
+    try {
+      const response = await window.apiClient.confirmRegistration({
+        productName,
+        confirmed,
+        idempotencyKey,
+        sessionId: this.sessionId
+      });
+
+      this.handleApiResponse(response);
+    } catch (error) {
+      console.error('Error in registration confirmation:', error);
+      this.handleCommunicationError(error);
+    } finally {
+      this.setLoadingState(false);
+    }
+  }
+
+  /**
+   * Cancel operation
+   */
+  async executeCancel() {
+    const productName = this.pendingContext ? this.pendingContext.productName : null;
+    this.pendingContext = null;
+
+    const userBubble = window.ChatComponents.createMessageBubble({
+      sender: 'user',
+      text: 'Cancelar operación'
+    });
+    this.messagesContainer.appendChild(userBubble);
+
+    this.setLoadingState(true);
+    try {
+      const response = await window.apiClient.cancelOperation({
+        sessionId: this.sessionId,
+        reason: 'EMPLOYEE_CLICKED_CANCEL',
+        productName
+      });
+      const bubble = window.ChatComponents.createMessageBubble({
+        sender: 'agent',
+        text: response.message || 'Operación cancelada.'
+      });
+      this.messagesContainer.appendChild(bubble);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      this.setLoadingState(false);
+      this.scrollToBottom();
+    }
+  }
+
+  handleCommunicationError(error, context = {}) {
+    const bubble = window.ChatComponents.createMessageBubble({
+      sender: 'agent',
+      text: `Error de comunicación con el servidor: ${error.message}. Por favor verifica tu conexión y vuelve a intentar.`,
+      status: 'ERROR',
+      actions: [
+        { type: 'RETRY', label: 'Reintentar comunicación', value: true }
+      ]
+    });
+    this.messagesContainer.appendChild(bubble);
+    this.scrollToBottom();
+  }
+
+  setLoadingState(isLoading) {
+    this.isProcessing = isLoading;
+    this.btnSend.disabled = isLoading;
+    this.messageInput.disabled = isLoading;
+
+    const existingIndicator = document.getElementById('typing-indicator');
+
+    if (isLoading) {
+      if (this.statusIndicator) {
+        this.statusIndicator.textContent = 'Agente procesando...';
+        this.statusIndicator.className = 'status-badge status-loading';
+      }
+      if (!existingIndicator) {
+        const indicator = window.ChatComponents.createTypingIndicator();
+        this.messagesContainer.appendChild(indicator);
+        this.scrollToBottom();
+      }
+    } else {
+      if (this.statusIndicator) {
+        this.statusIndicator.textContent = 'En línea';
+        this.statusIndicator.className = 'status-badge status-online';
+      }
+      if (existingIndicator) {
+        existingIndicator.remove();
+      }
+      this.messageInput.focus();
+    }
+  }
+
+  shakeInput() {
+    this.messageInput.classList.add('input-shake');
+    setTimeout(() => {
+      this.messageInput.classList.remove('input-shake');
+      this.messageInput.focus();
+    }, 400);
+  }
+
+  scrollToBottom() {
+    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  showStatusToast(msg) {
+    const toast = document.createElement('div');
+    toast.className = 'toast-notification';
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.classList.add('toast-show'), 10);
+    setTimeout(() => {
+      toast.classList.remove('toast-show');
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
+}
+
+// Instantiate on DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  window.chatApp = new ChatController();
+});
